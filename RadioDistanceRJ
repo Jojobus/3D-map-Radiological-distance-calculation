@@ -1,0 +1,232 @@
+print("\n#####################################################")        
+print("###   Creation of a radiological distance 3D map  ####")
+print("####################################################")
+
+import pickle
+import numpy as np
+import time
+from array import array
+
+#The files will be saved here:
+DVKassocie = "Your Path"
+FichierClassementDistanceDVK=DVKassocie+"classementDistanceDVK"
+
+# Parameters to choose
+TailleFiltre =  [49,49,49] #Voxels  #Choose a odd number for the voxels number cube
+DVKPixelDims = [4.8, 4.8, 4.8] #Size (often in mm for medical DICOM images)
+def flatten(x):
+    result = []
+    for el in x:
+        if hasattr(el, "__iter__") and not isinstance(el, str):
+            result.extend(flatten(el))
+        else:
+            result.append(el)
+    return result
+
+ListeDVK1=[]
+ListeDVK2=[]
+
+
+print("\n## Step 1: 3D map of distance")
+
+Center=np.multiply(DVKPixelDims,0.5)
+ListeDistanceIndice=[]
+temps1=time.time()
+
+for z in range(-(TailleFiltre[2]/2-1),TailleFiltre[2]/2): 
+    for y in range(-(TailleFiltre[1]/2-1),TailleFiltre[1]/2):
+        for x in range(-(TailleFiltre[0]/2-1),TailleFiltre[0]/2):
+            RayTracing=np.array([(x+0.5)*DVKPixelDims[0],(y+0.5)*DVKPixelDims[1],(z+0.5)*DVKPixelDims[2]])           
+            RayTracingVecteur=RayTracing-Center
+            DistEtIndice=[np.around(np.linalg.norm(RayTracingVecteur),5), x, y, z]
+            ListeDistanceIndice.append(DistEtIndice)
+            
+###############
+####Rank#
+###############
+
+ListeDistanceIndice.sort()
+ListeDistanceIndice=ListeDistanceIndice[1:]
+ListeDistanceIndiceuh=flatten(ListeDistanceIndice)
+temps2=time.time()
+print "\nTemps effectif: "+str(temps2-temps1)+" secondes, soit "+str((temps2-temps1)/60)+" minutes."
+
+
+myarray = np.asarray(ListeDistanceIndiceuh)
+output_file = open(FichierClassementDistanceDVK, 'wb')
+float_array = array('d', myarray)
+float_array.tofile(output_file)
+
+#Reading of distance 3d map previously saved
+FichierClassementDistanceDVK=DVKassocie+"classementDistanceDVK"
+#Writing of the future output
+FichierGrosseListePondDist=DVKassocie+"GrosseListePondDist"
+
+
+print("\n## Step 2: 3D map of weighted distance")
+
+
+##############################################
+#Fonction intersection
+
+def LinePlaneCollision(planeNormal, planePoint, rayDirection, rayPoint, epsilon=1e-6):
+    ndotu = planeNormal.dot(rayDirection)
+    if abs(ndotu) < epsilon:
+        return None,None,None
+    w = rayPoint - planePoint
+    si = -planeNormal.dot(w) / ndotu
+    Psi = w + si * rayDirection + planePoint
+    if ((Psi[0]-Center[0])**2 + (Psi[1]-Center[1])**2 + (Psi[2]-Center[2])**2)>((rayPoint[0]-Center[0])**2 + (rayPoint[1]-Center[1])**2 + (rayPoint[2]-Center[2])**2) :
+        return Psi, None
+    else:
+        #Index voxel: euclidian division
+        return Psi, 1
+    
+    
+
+##########################################################################################################################################
+##########################################################################################################################################
+temps1=time.time()
+
+##############################################
+#Importation distance matrix
+input_file = open(FichierClassementDistanceDVK, 'rb')
+ArrayDistanceVoxels = array('d')
+ArrayDistanceVoxels.fromstring(input_file.read())
+Liste=ArrayDistanceVoxels.tolist()
+DistanceVoxels=np.reshape(Liste,(len(Liste)/4,4))
+
+Ct=0
+GrosseListePondDist=[]
+PlaneVectorX=np.array([1.0,0.0,0.0])
+PlaneVectorY=np.array([0.0,1.0,0.0])
+PlaneVectorZ=np.array([0.0,0.0,1.0])
+limXY=(TailleFiltre[2]+2)/2
+limYZ=(TailleFiltre[1]+2)/2
+limXZ=(TailleFiltre[0]+2)/2
+l=0
+m=0
+n=0
+#Path from the closest to the furthest voxel
+for XYZ in DistanceVoxels: #[:86]: est un (3,0,0) et [:85]: est un (-3,0,0)
+    ListeTemp=[]
+    x=int(XYZ[1])
+    y=int(XYZ[2])
+    z=int(XYZ[3])
+    #No plan at x,y,z=0 neither at x,y,z=max and = max-1 because we need a odd matrix
+    RayTracingDestination=np.array([(x+0.5)*DVKPixelDims[0],(y+0.5)*DVKPixelDims[1],(z+0.5)*DVKPixelDims[2]])           
+    RayTracingVecteur=RayTracingDestination-Center
+
+    ListeCoorInterXY=[]
+    ListeCoorInterXZ=[]
+    ListeCoorInterYZ=[]
+    NbXY=0
+    NbYZ=0
+    NbXZ=0
+
+    #Plan XY:
+
+    for c in range (limXY):
+        if z>n:#Positive sxis
+            cc=n
+        else:#Negative axis
+            cc=n-2*c-1
+        PointPlane=([0.0,0.0,(cc+1+c)*DVKPixelDims[2]])
+        PointIntersection=LinePlaneCollision(PlaneVectorZ,PointPlane,RayTracingVecteur,RayTracingDestination)
+        if PointIntersection[1] is not None:
+            NbXY=NbXY+1
+        ListeCoorInterXY.append(PointIntersection)
+
+    #Plan YZ: 
+
+    for a in range (limYZ):
+        if y>m:
+            aa=m
+        else:
+            aa=m-2*a-1
+        PointPlane=([0.0,(aa+1+a)*DVKPixelDims[1],0.0])
+        PointIntersection=LinePlaneCollision(PlaneVectorY,PointPlane,RayTracingVecteur,RayTracingDestination)    
+        if PointIntersection[1] is not None:
+            NbYZ=NbYZ+1
+        ListeCoorInterYZ.append(PointIntersection)
+
+
+    #Plan XZ:
+
+    for b in range (limXZ): 
+        if x>l:
+            bb=l
+        else:
+            bb=l-2*b-1
+        PointPlane=([(bb+1+b)*DVKPixelDims[0],0.0,0.0])
+        PointIntersection=LinePlaneCollision(PlaneVectorX,PointPlane,RayTracingVecteur,RayTracingDestination)
+        if PointIntersection[1] is not None:
+            NbXZ=NbXZ+1
+        ListeCoorInterXZ.append(PointIntersection)
+
+
+
+    ListePondVoxels=[]
+
+    
+    if (NbXY>=NbYZ) and (NbXY>=NbXZ) and (NbXY!=0):
+        ListeChemin=ListeCoorInterXY
+                #Addition of distance and coordinates
+        for Q in range(len(ListeChemin)):
+            if ListeChemin[Q][1]==None:
+                ListePondVoxels[Q-1][0]=np.linalg.norm(RayTracingDestination-ListeChemin[Q][0])
+                break
+            if cc!=n:#if we are going to negative axis:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+2][0]-ListeChemin[Q+1][0]),int(np.round(ListeChemin[Q+1][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q+1][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q+1][0][2]/DVKPixelDims[2]))])
+            else:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+1][0]-ListeChemin[Q][0]),int(np.round(ListeChemin[Q][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q][0][2]/DVKPixelDims[2]))])
+
+    elif (NbYZ>=NbXY) and (NbYZ>=NbXZ) and (NbYZ!=0):
+        ListeChemin=ListeCoorInterYZ
+        for Q in range(len(ListeChemin)):
+            if ListeChemin[Q][1]==None:
+                ListePondVoxels[Q-1][0]=np.linalg.norm(RayTracingDestination-ListeChemin[Q][0])
+                break
+            if aa!=m:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+2][0]-ListeChemin[Q+1][0]),int(np.round(ListeChemin[Q+1][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q+1][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q+1][0][2]/DVKPixelDims[2]))])
+            else:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+1][0]-ListeChemin[Q][0]),int(np.round(ListeChemin[Q][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q][0][2]/DVKPixelDims[2]))])
+
+    elif (NbXZ>=NbXY) and (NbXZ>=NbYZ) and (NbXZ!=0):
+        ListeChemin=ListeCoorInterXZ
+        for Q in range(len(ListeChemin)):
+
+            if ListeChemin[Q][1]==None:
+                ListePondVoxels[Q-1][0]=np.linalg.norm(RayTracingDestination-ListeChemin[Q][0])
+                break
+            if bb!=l:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+2][0]-ListeChemin[Q+1][0]),int(np.round(ListeChemin[Q+1][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q+1][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q+1][0][2]/DVKPixelDims[2]))])
+            else:
+                ListePondVoxels.append([np.linalg.norm(ListeChemin[Q+1][0]-ListeChemin[Q][0]),int(np.round(ListeChemin[Q][0][0]/DVKPixelDims[0])),int(np.round(ListeChemin[Q][0][1]/DVKPixelDims[1])),int(np.round(ListeChemin[Q][0][2]/DVKPixelDims[2]))])
+
+    ListePondVoxels[-1]=[ListePondVoxels[-1][0],int(XYZ[1]),int(XYZ[2]),int(XYZ[3])] 
+    GrosseListePondDist.append(ListePondVoxels)
+
+
+temps2=time.time()                                          
+print "\nTemps de l'exécution: "+str(temps2-temps1)+" secondes, \n"+"                 soit "+str((temps2-temps1)/60)+" minutes."
+
+output = open(FichierGrosseListePondDist, 'wb')
+pickle.dump(GrosseListePondDist,output,-1)
+output.close()
+
+
+print"\nLast creation: "+str(time.strftime("%A %d %B %Y %H:%M:%S"))
+
+
+print "\nEnd"
+
+#### For the importation:
+
+Badaboum = open(FichierGrosseListePondDist, 'rb')
+GrosseListePondDist = pickle.load(Badaboum)
+
+
+
+# Some rounding to improve...
+# Extreme coordinates as well
